@@ -1,0 +1,70 @@
+# ============================================================
+# confirm-tools -> builtin_rules.yaml 规则迁移
+# ============================================================
+#
+# 使用方式：
+#   将以下 rules 条目合并到 ~/.jiuwenswarm/config/builtin_rules.yaml
+#   （用户 config 目录下的 builtin_rules.yaml 优先级高于包内默认文件）
+#
+# 对比结果：
+#   confirm-tools 共 27 条黑名单 + 6 条混淆 + 内联检测
+#   builtin_rules.yaml（10条）已覆盖其中 80%
+#   以下 7 条为未覆盖的高价值规则，建议迁移
+# ============================================================
+
+rules:
+  # ---- 1. 危险权限配置 ----
+  - id: confirm_tools_chmod_dangerous
+    description: "chmod 777 / 666 / 000 等授予过于宽松或过于严格的权限，可能导致任意用户读写执行"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])chmod\b[^;&|]*\s([0-7]*7[0-7]*7[0-7]*|[0-7]*0[0-7]*0[0-7]*)\b'
+    severity: CRITICAL
+
+  # ---- 2. 文件所有权变更（特权用户） ----
+  - id: confirm_tools_chown_root_or_system
+    description: "将文件所有权变更为 root/系统用户，可能配合其他操作实现提权或写入敏感配置"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])chown\b[^;&|]*\s(root|system|administrator)[\s:]'
+    severity: CRITICAL
+
+  # ---- 3. 文件截断/清空 ----
+  - id: confirm_tools_file_truncation
+    description: "通过 truncate 或 /dev/null 重定向清空文件内容，可能造成数据不可恢复的丢失"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)((^|[\s;&|()])truncate\b\s+-s\s+0\b|cat\s+/dev/null\s*>|>\s*/dev/null\s*<)'
+    severity: HIGH
+
+  # ---- 4. find -exec 批量破坏 ----
+  - id: confirm_tools_find_exec_destructive
+    description: "通过 find -exec 批量执行破坏性命令（rm/shred/del），比 -delete 覆盖更广的攻击面"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)find\b[^;&|]*\s-exec\b[^;&|]*(rm|shred|del|unlink|dd)\b'
+    severity: CRITICAL
+
+  # ---- 5. 命令替换包裹危险命令 ----
+  - id: confirm_tools_command_substitution_danger
+    description: "通过 $() 或反引号嵌套危险命令，实现隐蔽的命令注入和绕过"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)(\$\([^)]*\b(rm|shred|del|unlink|shutdown|reboot|dd|mkfs|format|nc)\b[^)]*\)|\x60[^\x60]*\b(rm|shred|del|unlink|shutdown|reboot|dd|mkfs|format|nc)\b[^\x60]*\x60)'
+    severity: CRITICAL
+
+  # ---- 6. unlink（直接删除文件，绕过回收站） ----
+  - id: confirm_tools_unlink_bypass_trash
+    description: "unlink 直接删除文件 link 条目，不经过回收站，数据恢复困难"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)(^|[\s;&|()])unlink\b'
+    severity: HIGH
+
+  # ---- 7. 内联代码执行中包含 base64 编码载荷 ----
+  - id: confirm_tools_inline_base64_payload
+    description: "python/node -c 后跟 base64 解码+执行，是可绕过审计的编码执行攻击"
+    tools: [bash, mcp_exec_command, create_terminal]
+    match_type: command
+    pattern: 're:(?i)((python3?|node)\s+-[ce]\b[^;&|]*\b(b64decode|base64\.b64decode|from\s+base64|atob)\b)'
+    severity: CRITICAL
