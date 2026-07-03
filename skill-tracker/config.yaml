@@ -1,0 +1,9 @@
+hooks:
+  disable_all_hooks: false
+  PreToolUse:
+    - matcher: "skill_tool"
+      hooks:
+        - type: command
+          command: "/usr/bin/python3 ~/.jiuwenswarm/scripts/skill-tracker.py"
+          timeout: 10
+          shell: "bash"
