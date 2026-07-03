@@ -35,14 +35,6 @@ def log(level, msg):
         pass
 
 
-def extract_skill_name(file_path):
-    parts = Path(file_path).parts
-    for i, p in enumerate(parts):
-        if p == "SKILL.md" and i > 0:
-            return parts[i - 1]
-    return ""
-
-
 def main():
     # 优先从环境变量读取，回退到 stdin
     raw = os.environ.get("ARGUMENTS", "")
