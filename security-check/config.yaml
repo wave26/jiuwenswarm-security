@@ -1,0 +1,27 @@
+# 1. extensions 段添加搜索路径（如已有则确保包含 ~/.jiuwenswarm/extensions）
+# 路径：~/.jiuwenswarm/config/config.yaml
+
+extensions:
+  extension_dirs: "jiuwenswarm/extensions;~/.jiuwenswarm/extensions"
+
+# 2. 安全检测配置（可选，也可通过环境变量配置）
+# 路径：~/.jiuwenswarm/config/config.yaml
+
+# 正式环境（真实安全 API）
+# security-check:
+#   apiUrl: "https://your-security-api.example.com/check"
+#   accessKey: "your-access-key"
+
+# 本地测试环境（Mock 安全检测服务）
+# 先启动: python extensions/security-check/mock-server.py
+security-check:
+  apiUrl: "http://localhost:3456"
+  accessKey: "test-key"
+  appId: "default"
+  tokenId: "jiuwenswarm"
+  timeoutMs: 3000
+  maxRetries: 2
+  retryDelayMs: 500
+  blockMessage: "您的消息因安全策略被拦截。"
+  blockReview: false
+  skipChannels: []
