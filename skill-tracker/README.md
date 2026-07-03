@@ -1,154 +1,169 @@
-# skill-tracker
+# security-check
 
-九问Swarm 技能调用审计插件。当 Agent 调用 `skill_tool` 执行技能时，自动记录每次技能调用的审计信息，生成 JSON 文件用于分析和归档。
+JiuwenSwarm 消息安全检测插件。在用户消息进入 LLM 推理之前，调用外部安全 API 进行文本风险检测，支持 PASS / REVIEW / REJECT 三级风险判定。
 
 ## 基本信息
 
 | 项目 | 内容 |
 |------|------|
-| 插件名 | `skill-tracker` |
+| 插件ID | `security-check` |
 | 版本 | 1.0.0 |
-| 方案 | Hook（`PreToolUse`，matcher=`skill_tool`） |
-| 入口脚本 | `~/.jiuwenswarm/scripts/skill-tracker.py` |
-| 源自 | 小巧灵（OpenClaw）`extensions/skill-tracker` |
+| 方案 | Extension（`before_chat_request`） |
+| 依赖 | `aiohttp >= 3.8.0` |
+| 源自 | 小巧灵（OpenClaw）`extensions/security-check` |
 
 ## 架构
 
 ```
-用户对话 → Agent LLM 推理
-                │
-                ▼
-          Agent 决定调用 skill_tool（如 weather 技能）
-                │
-                ▼
-UserHookRail.before_tool_call()
-        │
-        ├─ match("PreToolUse", "skill_tool") → 命中
-        │
-        └─ 启动子进程 skill-tracker.py
-                │
-                ├─ 解析 ARGUMENTS JSON
-                ├─ 提取 skill_name（从 tool_input）
-                ├─ 仅拦截 skill_tool → 非 skill_tool 直接 exit 0
-                │
-                ├─ 生成审计记录
-                │    └─ 技能名、时间戳、session_id
-                │
-                ├─ 写 JSON → ~/.jiuwenswarm/skill-invocations/{ts}_{skill}.json
-                ├─ 写日志 → ~/.jiuwenswarm/logs/skill-tracker.log
-                │
-                └─ exit 0 → 放行，Agent 正常执行技能
+用户消息 → Gateway → ExtensionRegistry.trigger("before_chat_request")
+                        │
+                        ▼
+               SecurityCheckExtension
+                        │
+            ┌───────────┼───────────┐
+            ▼           ▼           ▼
+         跳过检测    API 调用     API 失败
+    (skipChannels/  (带重试)    (降级放行)
+     accessKey未配)
+            │           │
+        ┌───┘     ┌─────┴─────┐
+        ▼         ▼           ▼
+      放行      PASS        REJECT/REVIEW
+                 │         (blockReview=true)
+                 ▼              │
+               放行        拦截（替换消息内容）
 ```
 
 ## 部署
 
-### 1. 创建脚本
+### 1. 创建目录
 
 ```bash
-mkdir -p ~/.jiuwenswarm/scripts
+mkdir -p ~/.jiuwenswarm/extensions/security-check
 ```
 
-将 `skill-tracker.py` 放入上述目录。
+### 2. 放置文件
 
-### 2. 修改 config.yaml
+将以下文件放入上述目录：
+- `extension.yaml` — 扩展清单
+- `extension.py` — 扩展入口
+- `README.md` — 本文件
+
+### 3. 配置
+
+在 `~/.jiuwenswarm/config/config.yaml` 中：
 
 ```yaml
-hooks:
-  disable_all_hooks: false
-  PreToolUse:
-    - matcher: "skill_tool"
-      hooks:
-        - type: command
-          command: "/usr/bin/python3 ~/.jiuwenswarm/scripts/skill-tracker.py"
-          timeout: 10
-          shell: "bash"
+extensions:
+  extension_dirs: "jiuwenswarm/extensions;~/.jiuwenswarm/extensions"
+
+security-check:
+  apiUrl: "https://your-security-api.example.com/check"
+  accessKey: "your-access-key"
+  appId: "default"
+  tokenId: "jiuwenswarm"
+  timeoutMs: 3000
+  maxRetries: 2
+  retryDelayMs: 500
+  blockMessage: "您的消息因安全策略被拦截。"
+  blockReview: false
+  skipChannels: []
 ```
 
-### 3. 重启
+或通过环境变量：
+
+```bash
+export AI_GUARDRAIL_URL="https://your-security-api.example.com/check"
+export AI_GUARDRAIL_ACCESSKEY="your-access-key"
+```
+
+### 4. 重启
 
 ```bash
 pkill -9 -f jiuwenswarm
 jiuwenswarm-start
 ```
 
-### 4. 验证
+## 安全 API 接口
 
-对话框发送"查询天气"，然后查看：
-
-```bash
-ls ~/.jiuwenswarm/skill-invocations/
-# 2026-07-02T23-47-49_weather.json
-
-cat ~/.jiuwenswarm/logs/skill-tracker.log
-# 2026-07-02 23:47:49 [INFO] [skill-tracker] skill=weather session= -> 2026-07-02T23-47-49_weather.json
-```
-
-## 输出文件
-
-### 审计记录
-
-路径：`~/.jiuwenswarm/skill-invocations/{时间戳}_{技能名}.json`
+### 请求
 
 ```json
 {
-  "actionPage": "九问Swarm Skill",
-  "channel": "jiuwenswarm",
-  "actionType": "",
-  "actionModule": "JiuwenSwarm_Skill",
-  "actionTitle": "Skill调用",
-  "content": "{\"skill\":\"weather\",\"session_id\":\"\",\"tool_name\":\"skill_tool\",\"timestamp\":\"2026-07-02 23:47:49\"}",
-  "text": "",
-  "userId": "",
-  "opTime": "2026-07-02 23:47:49"
+  "eventId": "input",
+  "data": {
+    "tokenId": "jiuwenswarm-<timestamp>-<session>",
+    "text": "用户消息内容"
+  },
+  "accessKey": "your-access-key",
+  "appId": "default",
+  "type": "TEXTRISK"
 }
 ```
 
-### 运行日志
+### 响应
 
-路径：`~/.jiuwenswarm/logs/skill-tracker.log`
+```json
+{
+  "riskLevel": "PASS",
+  "riskDescription": "内容安全",
+  "requestId": "req-xxxxxxxx"
+}
+```
+
+### 风险等级
+
+| 等级 | 行为 |
+|------|------|
+| `PASS` | 放行 |
+| `REVIEW` | 根据 `blockReview` 配置决定 |
+| `REJECT` | 直接拦截 |
+
+## 审计日志
+
+路径：`~/.jiuwenswarm/logs/security-check.log`
+
+格式：JSONL（每行一条 JSON）
 
 ```
-2026-07-02 23:47:49 [INFO] [skill-tracker] skill=weather session= -> 2026-07-02T23-47-49_weather.json
-2026-07-02 23:48:01 [INFO] [skill-tracker] skill=code-review session= -> 2026-07-02T23-48-01_code-review.json
-2026-07-02 23:50:15 [ERROR] [skill-tracker] 写入失败: Permission denied
+{"action":"allowed","messagePreview":"你好","riskLevel":"PASS","riskDescription":"内容安全","requestId":"req-123","tokenId":"jiuwenswarm-...","attempts":1,"timestamp":"2026-07-02 15:30:00"}
+{"action":"blocked","messagePreview":"危险内容...","riskLevel":"REJECT","riskDescription":"包含恶意内容","requestId":"req-456","tokenId":"jiuwenswarm-...","attempts":1,"timestamp":"2026-07-02 15:30:01"}
+{"action":"skipped","messagePreview":"你好","reason":"accessKey未配置","timestamp":"2026-07-02 15:30:02"}
 ```
 
-## 何时触发 vs 时不触发
+| 动作 | 含义 |
+|------|------|
+| `allowed` | 通过安全检测 |
+| `blocked` | 被拦截 |
+| `skipped` | 跳过检测（未配置/Channel 跳过/API 失败） |
 
-| 场景 | 是否触发 |
-|------|----------|
-| 查询天气（调用 weather 技能） | 触发 |
-| 代码审查（调用 code-review 技能） | 触发 |
-| 纯文本对话（"你好"） | 不触发 |
-| Agent 列出目录 / 读写文件 | 不触发（工具名不是 skill_tool） |
-| Agent 调用 read 读 SKILL.md | 不触发（JiuwenSwarm 中技能通过 skill_tool 调用） |
+## 配置项
+
+| 配置项 | 默认值 | 说明 |
+|--------|--------|------|
+| `apiUrl` | — | 安全 API 地址（必须） |
+| `accessKey` | — | API 密钥（未配置则跳过检测） |
+| `appId` | `"default"` | 应用 ID |
+| `tokenId` | `"jiuwenswarm"` | 默认 Token ID |
+| `timeoutMs` | `3000` | 单次请求超时（毫秒） |
+| `maxRetries` | `2` | 最大重试次数 |
+| `retryDelayMs` | `500` | 重试间隔（毫秒） |
+| `blockMessage` | `"您的消息因安全策略被拦截。"` | 拦截提示 |
+| `blockReview` | `false` | REVIEW 级别是否拦截 |
+| `skipChannels` | `[]` | 跳过检测的 Channel ID 列表 |
 
 ## 方案选型
 
-选用 **Hook 方案**而非 Extension 或 Rail：
+选用 **Extension 方案**而非 Hook 或 Rail，因为：
 
-- **Extension** 无 `PreToolUse` 事件，无法在工具调用级别拦截
-- **Rail** 需要写 Python 类并 import，纯审计日志场景过度设计
-- **Hook** 改 YAML 配置即生效，零侵入，完美匹配审计需求
-
-## 配置速查
-
-| 配置项 | 值 | 说明 |
-|--------|-----|------|
-| matcher | `skill_tool` | JiuwenSwarm 中技能调用的工具名 |
-| command | `/usr/bin/python3 ~/.jiuwenswarm/scripts/skill-tracker.py` | 必须绝对路径 |
-| shell | `bash` | Hook 执行器用 shell -c |
-| timeout | `10` | 超时秒数 |
-| 输出目录 | `~/.jiuwenswarm/skill-invocations/` | 审计 JSON |
-| 日志目录 | `~/.jiuwenswarm/logs/` | 运行日志 |
+- **Hook** 的 `PreToolUse` 事件在工具调用时触发，此时消息已进入 Agent
+- **Rail** 只有 `before_tool_call` 级事件，无法在消息进入前拦截
+- **Extension** 的 `before_chat_request` 是唯一能在 LLM 推理**之前**拦截的时机
 
 ## 踩坑记录
 
 | 问题 | 解决 |
 |------|------|
-| 沙箱隔离 `/tmp/` | 所有输出路径用 `~/.jiuwenswarm/` |
-| 沙箱内 Python 找不到 | 使用 `/usr/bin/python3` 绝对路径 |
-| `tool_input` 是字符串不是字典 | 脚本中 `isinstance(str)` 判断后 `json.loads` |
-| 工具名是 `skill_tool` 而非 `read` | JiuwenSwarm 与小巧灵的实现差异，技能读取走专用工具 |
-| `session_id` 为空 | JiuwenSwarm Hook 框架暂不传递，用时间戳+技能名唯一标识 |
-| Agent 纯文本回复不触发 | Hook 仅在工具调用时触发，非 LLM 文字回复 |
+| Extension 回调是否支持 async | 需确认框架版本，必要时用 `asyncio.create_task` 包装 |
+| API 失败导致 Agent 卡住 | 默认降级放行，也可改为降级拦截 |
+| 与 JiuwenBox 沙箱的关系 | Extension 在 AgentServer 进程内，不受沙箱网络隔离影响 |
