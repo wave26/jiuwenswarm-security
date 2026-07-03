@@ -1,0 +1,9 @@
+id: security-check
+name: security-check
+version: 1.0.0
+description: 安全检测插件：在 LLM 推理前进行安全筛查
+author: jiuwenswarm
+min_jiuwenswarm_version: "0.2.0"
+dependencies: {}
+config_schema:
+  type: object
