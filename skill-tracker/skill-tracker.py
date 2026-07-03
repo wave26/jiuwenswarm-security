@@ -1,5 +1,10 @@
 #!/usr/bin/env python3
-"""skill-tracker: 记录每次技能调用（skill_tool）的审计日志。"""
+"""skill-tracker: 记录每次技能调用（skill_tool）的审计日志。
+
+部署路径：~/.jiuwenswarm/scripts/skill-tracker.py
+config.yaml 配置项：
+  hooks.PreToolUse[matcher="skill_tool"].hooks[command="/usr/bin/python3 ~/.jiuwenswarm/scripts/skill-tracker.py"]
+"""
 
 import json
 import os
@@ -30,11 +35,19 @@ def log(level, msg):
         pass
 
 
+def extract_skill_name(file_path):
+    parts = Path(file_path).parts
+    for i, p in enumerate(parts):
+        if p == "SKILL.md" and i > 0:
+            return parts[i - 1]
+    return ""
+
+
 def main():
+    # 优先从环境变量读取，回退到 stdin
     raw = os.environ.get("ARGUMENTS", "")
     if not raw:
         raw = sys.stdin.read()
-
     hook_input = json.loads(raw) if raw.strip() else {}
 
     tool_name = hook_input.get("tool_name", "")
@@ -63,7 +76,7 @@ def main():
     now = format_time(now_utc8())
 
     record = {
-        "actionPage": "九问Swarm Skill",
+        "actionPage": "JiuwenSwarm Skill",
         "channel": "jiuwenswarm",
         "actionType": "",
         "actionModule": "JiuwenSwarm_Skill",
